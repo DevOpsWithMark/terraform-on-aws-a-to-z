@@ -15,14 +15,36 @@ else
   filters=(Key=Chapter)
 fi
 
+# Deleted ECS clusters and task definitions stay visible as
+# INACTIVE for a while. They cost nothing and cannot be
+# deleted, so skip them.
+still_active() {
+  local arn status
+  while read -r arn; do
+    [[ -z "$arn" ]] && continue
+    status=ACTIVE
+    case "$arn" in
+      *:ecs:*:cluster/*)
+        status=$(aws ecs describe-clusters --region "$1" \
+          --clusters "$arn" --query 'clusters[0].status' \
+          --output text) ;;
+      *:ecs:*:task-definition/*)
+        status=$(aws ecs describe-task-definition --region "$1" \
+          --task-definition "$arn" \
+          --query 'taskDefinition.status' --output text) ;;
+    esac
+    [[ "$status" == "INACTIVE" ]] || echo "$arn"
+  done
+}
+
 for r in us-east-1 us-west-2; do
   arns=$(aws resourcegroupstaggingapi get-resources \
     --region "$r" --tag-filters "${filters[@]}" \
     --query 'ResourceTagMappingList[].ResourceARN' \
-    --output text)
+    --output text | tr '\t' '\n' | still_active "$r")
   if [[ -n "$arns" && "$arns" != "None" ]]; then
     echo "Still tagged in $r:"
-    tr '\t' '\n' <<<"$arns" | sed 's/^/  /'
+    sed 's/^/  /' <<<"$arns"
     found=1
   fi
 done
