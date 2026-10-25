@@ -1,0 +1,272 @@
+# .github/workflows/terraform.yml
+# Pull request: check and plan envs/dev, comment the plan.
+# Merge to main: apply dev, plan prod, wait for approval,
+# then apply exactly the reviewed prod plan (Chapter 18).
+name: terraform
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "envs/**"
+      - "modules/**"
+      - "app/public/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "envs/**"
+      - "modules/**"
+      - "app/public/**"
+      - ".github/workflows/terraform.yml"
+
+# Least privilege by default; jobs add what they need.
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.17.0"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_REGION: us-east-1
+  STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+jobs:
+  plan-dev:
+    name: Plan dev
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # request an OIDC token
+      pull-requests: write  # post the plan comment
+    concurrency:
+      group: plan-dev-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: envs/dev
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write backend.hcl
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\n' \
+            "$STATE_BUCKET" "$AWS_REGION" > ../../backend.hcl
+
+      - name: Format check
+        working-directory: .
+        run: terraform fmt -check -recursive
+
+      - name: Init
+        run: terraform init -backend-config=../../backend.hcl
+
+      - name: Validate
+        run: terraform validate -no-color
+
+      - name: Plan
+        run: |
+          terraform plan -no-color -lock-timeout=5m -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plan-dev
+          path: envs/dev/tfplan
+          retention-days: 5
+
+      - name: Comment the plan
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- terraform-plan-dev -->';
+            const fence = '`'.repeat(3);
+            const file = 'envs/dev/plan.txt';
+            let plan = fs.readFileSync(file, 'utf8');
+            // Comments max out at 65,536 characters. Keep the
+            // end, which holds the "Plan: ..." summary.
+            if (plan.length > 60000) {
+              plan = '...\n' + plan.slice(-60000);
+            }
+            const sha = context.payload.pull_request.head.sha;
+            const body = [
+              marker,
+              '### Terraform plan: `envs/dev`',
+              `Commit ${sha.slice(0, 7)}`,
+              fence + 'text', plan, fence,
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number });
+            const old = comments.find(
+              (c) => c.body && c.body.includes(marker));
+            if (old) {
+              await github.rest.issues.updateComment(
+                { owner, repo, comment_id: old.id, body });
+            } else {
+              await github.rest.issues.createComment(
+                { owner, repo, issue_number, body });
+            }
+
+  apply-dev:
+    name: Apply dev
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-dev
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: envs/dev
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write backend.hcl
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\n' \
+            "$STATE_BUCKET" "$AWS_REGION" > ../../backend.hcl
+
+      - name: Init
+        run: terraform init -backend-config=../../backend.hcl
+
+      - name: Plan
+        run: terraform plan -no-color -lock-timeout=5m -out=tfplan
+
+      - name: Apply the saved plan
+        run: terraform apply -no-color -lock-timeout=5m tfplan
+
+  plan-prod:
+    name: Plan prod
+    needs: apply-dev
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+    defaults:
+      run:
+        working-directory: envs/prod
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write backend.hcl
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\n' \
+            "$STATE_BUCKET" "$AWS_REGION" > ../../backend.hcl
+
+      - name: Init
+        run: terraform init -backend-config=../../backend.hcl
+
+      # Exit code 0 = no changes, 2 = changes, 1 = error.
+      - name: Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -no-color -lock-timeout=5m \
+            -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then exit 1; fi
+          changes=false
+          if [ "$code" -eq 2 ]; then changes=true; fi
+          echo "changes=$changes" >> "$GITHUB_OUTPUT"
+
+      # The reviewer reads this on the run's summary page.
+      - name: Show the plan in the job summary
+        run: |
+          {
+            echo '### Terraform plan: `envs/prod`'
+            echo '```text'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plan-prod
+          path: envs/prod/tfplan
+          retention-days: 5
+
+  apply-prod:
+    name: Apply prod
+    needs: plan-prod
+    if: needs.plan-prod.outputs.changes == 'true'
+    runs-on: ubuntu-latest
+    environment: prod       # waits for a required reviewer
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-prod
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: envs/prod
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write backend.hcl
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\n' \
+            "$STATE_BUCKET" "$AWS_REGION" > ../../backend.hcl
+
+      - name: Init
+        run: terraform init -backend-config=../../backend.hcl
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan-prod
+          path: envs/prod
+
+      # Applies exactly what the reviewer approved. If state
+      # changed since the plan, Terraform refuses (stale plan).
+      - name: Apply the reviewed plan
+        run: terraform apply -no-color -lock-timeout=5m tfplan

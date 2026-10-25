@@ -1,0 +1,9 @@
+# infracost.yml
+# Tells Infracost which roots to price (Chapter 21).
+# It must sit at the repository root, so modules/ resolves.
+version: 0.1
+projects:
+  - path: envs/dev
+    name: dev
+  - path: envs/prod
+    name: prod

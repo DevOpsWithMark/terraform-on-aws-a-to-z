@@ -1,0 +1,19 @@
+{
+  "name": "shortener",
+  "version": "1.0.0",
+  "description": "URL Shortener sample app for the DevOps With Mark Series",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "express": "^5.1.0"
+  },
+  "license": "MIT"
+}

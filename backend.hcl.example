@@ -1,0 +1,5 @@
+# backend.hcl.example — copy to backend.hcl and fill in
+# the bucket name printed by bootstrap (Chapter 11).
+# e.g. devopswm-shortener-tfstate
+bucket = "<your bucket name>"
+region = "us-east-1"

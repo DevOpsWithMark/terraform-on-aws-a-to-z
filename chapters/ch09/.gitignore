@@ -1,0 +1,10 @@
+# chapters/ch09/.gitignore
+# Local state and plans can hold secrets.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# Variable files that hold secrets. Commit only the example.
+*.secret.tfvars
+!example.secret.tfvars
