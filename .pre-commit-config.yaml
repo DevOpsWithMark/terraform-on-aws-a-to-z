@@ -1,8 +1,9 @@
 # .pre-commit-config.yaml
 # Runs on every `git commit` after `pre-commit install`
 # (Chapter 17). Run on all files: pre-commit run -a
-# Chapter 20's configs are broken on purpose, so skip them.
-exclude: ^chapters/ch20/
+# Chapter 20 is broken on purpose; ch11/extras and ch12/steps
+# are fragments to copy. Skip them all.
+exclude: ^chapters/(ch20/|ch11/extras/|ch12/steps/)
 
 repos:
   - repo: https://github.com/antonbabenko/pre-commit-terraform

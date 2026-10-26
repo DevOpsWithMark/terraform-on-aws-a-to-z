@@ -26,7 +26,7 @@ envs/
                      shortener/dev/terraform.tfstate
   prod/              Ch 16: same modules, 10.1.0.0/16, PITR on,
                      30-day logs, state key shortener/prod/...
-chapters/chNN/       practice labs for Chapters 3-12, 16, 19, 20
+chapters/chNN/       practice labs for Chapters 2-14, 16, 19, 20
 cicd/                Ch 18: GitHub OIDC provider + plan/apply roles
 infracost.yml        Ch 21: projects for infracost scan (run from here)
 .github/workflows/   Ch 18: plan on pull request, apply on merge
