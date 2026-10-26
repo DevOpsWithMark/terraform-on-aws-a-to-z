@@ -61,7 +61,7 @@ terraform apply                        # desired_count = 2
 terraform output app_url               # open in a browser
 ```
 
-Tear down with `terraform destroy`, then `../../scripts/check-leftovers.sh`.
+Tear down with `terraform destroy`, then `../../scripts/check-leftovers.sh 15`.
 
 ## License
 
