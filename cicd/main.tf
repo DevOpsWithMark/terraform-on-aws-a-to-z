@@ -3,12 +3,9 @@
 # short-lived OIDC tokens instead of stored access keys
 # (Chapter 18). Apply this root from your machine, once.
 
-data "aws_caller_identity" "current" {}
-
 locals {
-  oidc_host  = "token.actions.githubusercontent.com"
-  repo       = var.github_sub_prefix
-  account_id = data.aws_caller_identity.current.account_id
+  oidc_host = "token.actions.githubusercontent.com"
+  repo      = var.github_sub_prefix
 }
 
 # ---------- Trust GitHub's token issuer ----------
@@ -74,22 +71,13 @@ data "aws_iam_policy_document" "plan_extra" {
     ]
   }
 
-  # Refreshing aws_secretsmanager_secret_version calls
-  # GetSecretValue, which ReadOnlyAccess does not include.
-  statement {
-    sid     = "RefreshAppSecrets"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      join(":", [
-        "arn:aws:secretsmanager:us-east-1", local.account_id,
-        "secret:devopswm-shortener-*",
-      ]),
-    ]
-  }
+  # No secret reads: the admin token is write-only, so refreshing
+  # its secret version only lists version IDs (provider 6.26+),
+  # which ReadOnlyAccess already allows.
 }
 
 resource "aws_iam_role_policy" "plan_extra" {
-  name   = "state-lock-and-secret-refresh"
+  name   = "state-lock-files"
   role   = aws_iam_role.plan.id
   policy = data.aws_iam_policy_document.plan_extra.json
 }
